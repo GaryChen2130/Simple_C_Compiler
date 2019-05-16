@@ -5,16 +5,20 @@
 #include <stdbool.h>
 #include <string.h>
 
+int error_num;
 extern int yylineno;
 extern int yylex();
 extern char* yytext;   // Get current token from lex
+char* error_msg;
 extern char buf[256];  // Get current code line from lex
 
 /* Symbol table function - you can add new function if needed. */
-int lookup_symbol();
+int lookup_symbol(char *);
 void create_symbol();
 void insert_symbol(char *symbol_name,char *entry_name, char *data_name);
 void dump_symbol();
+
+int syntax_error_flag;
 
 typedef struct entry{
 
@@ -30,8 +34,10 @@ typedef struct entry{
 
 Entry *table_head;
 
-void Insert_Entry(Entry **,Entry *);
-Entry *Remove_Entry(Entry **,int);
+void Insert_Entry(Entry **, Entry *);
+Entry *Remove_Entry();
+void yysemantic(int);
+void Print_Table(int);
 
 %}
 
@@ -62,7 +68,11 @@ Entry *Remove_Entry(Entry **,int);
 
 /* Nonterminal with return, which need to sepcify type */
 %type <string> type
-%type <string> func_def declaration_specs declarator parameter_list
+%type <string> func_def declaration declaration_specs declarator 
+%type <string> parameter_list parameter_declaration
+%type <string> init_declarator_list init_declarator
+%type <string> postfix_expression primary_expression
+%type <string> id_var
 
 /* Yacc will start at this nonterminal */
 %start program
@@ -81,23 +91,23 @@ global_declaration
 ;
 
 func_def 
-    : declaration_specs declarator declaration_list compound_stat	{/*insert_symbol($2, "function", $1);*/}
-    | declaration_specs declarator compound_stat			{/*insert_symbol($2, "function", $1);*/}
-    | declarator declaration_list compound_stat				{;}
-    | declarator compound_stat						{;}
+    : declaration_specs declarator declaration_list compound_stat 	{insert_symbol($2, "function", $1);}
+    | declaration_specs declarator compound_stat 			{insert_symbol($2, "function", $1);}
+    | declarator declaration_list compound_stat
+    | declarator compound_stat
 ;
 
 declaration_specs 
-    : type			{/*$$ = $1;*/}
+    : type			{$$ = $1;}
     | type declaration_specs	{;}
 ;
 
 declarator 
-    : ID				{/*$$ = strcat($1, " ");*/}
-    | LB declarator RB			{;}
-    | declarator LB parameter_list RB	{/*$$ = strcat($1, $1);*/}
-    | declarator LB id_list RB		{;}
-    | declarator LB RB			{/*$$ = $1;*/}
+    : ID							{$$ = strdup(yytext);}
+    | LB declarator RB						{;}
+    | declarator LB enter_scope parameter_list RB leave_scope	{$$ = strcat(strcat($1,"|"), $4);}
+    | declarator LB id_list RB					{;}
+    | declarator LB RB						{$$ = $1;}
 ;
 
 declaration_list 
@@ -106,10 +116,20 @@ declaration_list
 ;
 
 compound_stat 
-    : LCB RCB	
-    | LCB stat_list RCB       
-    | LCB declaration_list RCB		
-    | LCB declaration_list stat_list RCB				
+    : LCB enter_scope RCB leave_scope
+    | LCB enter_scope block_item_list RCB leave_scope
+;
+enter_scope : {++(table_head -> scope_level); /*printf("%d\n",table_head -> scope_level);*/}
+leave_scope : {--(table_head -> scope_level);}
+
+block_item_list
+    : block_item
+    | block_item_list block_item
+;
+
+block_item 
+    : declaration_list
+    | stat_list
 ;
 
 stat_list 
@@ -118,8 +138,18 @@ stat_list
 ;
 
 declaration 
-    : declaration_specs SEMICOLON
-    | declaration_specs init_declarator_list SEMICOLON
+    : declaration_specs SEMICOLON				
+    | declaration_specs init_declarator_list SEMICOLON	{	if(lookup_symbol($2) != 1)
+									insert_symbol($2, "variable", $1);
+								else{
+									error_num = 4;
+									if(error_msg == NULL)
+										error_msg = strdup("Redeclared variable ");
+									else
+										strcpy(error_msg,"Redeclared variable ");
+									strcat(error_msg, $2);
+								}
+							}
 ;
 
 stat 
@@ -133,7 +163,20 @@ stat
 
 print_stat 
     : PRINT LB QUATA STR_CONST QUATA RB SEMICOLON
-    | PRINT LB ID RB SEMICOLON
+    | PRINT LB id_var RB SEMICOLON			{
+    								if(lookup_symbol($3) < 0){
+									error_num = 2;
+									if(error_msg == NULL)
+										error_msg = strdup("Undeclared variable ");
+									else
+										strcpy(error_msg, "Undeclared variable ");
+									strcat(error_msg,$3);
+								}
+							}
+;
+
+id_var 
+    : ID {$$ = strdup(yytext);}
 ;
 
 expression_stat 
@@ -212,32 +255,50 @@ unary_expression
 ;
 
 postfix_expression 
-    : primary_expression
+    : primary_expression				{$$ = $1;}
     | postfix_expression LSB expression RSB
     | postfix_expression LB RB
-    | postfix_expression LB argv_expression_list RB
+    | postfix_expression LB argv_expression_list RB	{ if(lookup_symbol($1) < 0){
+							  	error_num = 1;
+								if(error_msg == NULL)
+									error_msg = strdup("Undeclared function ");
+								else
+									strcpy(error_msg, "Undeclared function ");
+								strcat(error_msg,$1);
+							  }
+							}
     | postfix_expression INC
     | postfix_expression DEC
 ;
 
 primary_expression 
-    : ID
-    | I_CONST
-    | F_CONST
-    | QUATA STR_CONST QUATA
+    : ID			{
+					$$ = strdup(yytext);
+    					if(lookup_symbol(yytext) < 0){
+						error_num = 2;
+						if(error_msg == NULL)
+							error_msg = strdup("Undeclared variable ");
+						else
+							strcpy(error_msg, "Undeclared variable ");
+						strcat(error_msg,yytext);
+					}
+				}
+    | I_CONST			{;}
+    | F_CONST			{;}
+    | QUATA STR_CONST QUATA	{;}
     | TRUE
     | FALSE
-    | LB expression RB
+    | LB expression RB		{;}
 ;
 
 parameter_list 
-    : parameter_declaration				{$$ = "";}
-    | parameter_list COMMA parameter_declaration	{$$ = "";}
+    : parameter_declaration				{$$ = $1;}
+    | parameter_list COMMA parameter_declaration	{$$ = strcat(strcat($1, ", "), $3);}
 ;
 
 parameter_declaration 
-    : declaration_specs declarator
-    | declaration_specs
+    : declaration_specs declarator	{$$ = $1; insert_symbol($2, "parameter", $1);}
+    | declaration_specs			
 ;
 
 argv_expression_list 
@@ -246,13 +307,13 @@ argv_expression_list
 ;
 
 init_declarator_list 
-    : init_declarator
+    : init_declarator					{$$ = $1;}
     | init_declarator_list COMMA init_declarator
 ;
 
 init_declarator 
-    : declarator
-    | declarator ASGN initializer
+    : declarator			{$$ = $1;}
+    | declarator ASGN initializer	{$$ = $1;}
 ;
 
 initializer 
@@ -288,11 +349,11 @@ unary_op
 
 /* actions can be taken when meet the token or rule */
 type
-    : INT { $$ = $1; }
-    | FLOAT { $$ = $1; }
-    | BOOL  { $$ = $1; }
-    | STRING { $$ = $1; }
-    | VOID { $$ = $1; }
+    : INT { $$ = strdup(yytext); }
+    | FLOAT { $$ = strdup(yytext); }
+    | BOOL  { $$ = strdup(yytext); }
+    | STRING { $$ = strdup(yytext); }
+    | VOID { $$ = strdup(yytext); }
 ;
 
 %%
@@ -301,34 +362,60 @@ type
 int main(int argc, char** argv)
 {
     yylineno = 0;
+    error_num = 0;
+    error_msg = NULL;
+    syntax_error_flag = 0;
 
     create_symbol();
-    printf("1: ");
     yyparse();
-    printf("\nTotal lines: %d \n",yylineno);
-    dump_symbol();
+    if(syntax_error_flag == 0){
+    	Print_Table(0);
+    	printf("\nTotal lines: %d \n",yylineno);
+    }
 
     return 0;
 }
 
 void yyerror(char *s)
 {
+    if(error_num != 0)
+    	yysemantic(1);
+    else
+    	printf("%d: %s\n", yylineno + 1,buf);
+
+    syntax_error_flag = 1;
     printf("\n|-----------------------------------------------|\n");
-    printf("| Error found in line %d: %s\n", yylineno, buf);
+    printf("| Error found in line %d: %s\n", yylineno + 1, buf);
     printf("| %s", s);
     printf("\n|-----------------------------------------------|\n\n");
+    memset(buf,'\0',sizeof(buf));
+    
+}
+
+void yysemantic(int mode){
+
+    	error_num = 0;
+	printf("%d: %s\n", yylineno + mode, buf);
+    	printf("\n|-----------------------------------------------|\n");
+    	printf("| Error found in line %d: %s\n", yylineno + mode, buf);
+    	printf("| %s", error_msg);
+    	printf("\n|-----------------------------------------------|\n\n");
+	if(!mode)memset(buf,'\0',sizeof(buf));
+
 }
 
 void create_symbol() {
 	table_head = (Entry *)malloc(sizeof(Entry));
 	table_head -> entry_num = 0;
 	table_head -> scope_level = 0;
+	table_head -> next = NULL;
 }
 
 void insert_symbol(char *symbol_name, char *entry_name, char *data_name) {
 
+	//printf("insert symbol\n%s\n%s\n%s\n", symbol_name, entry_name, data_name);
 	Entry *new_entry = (Entry *)malloc(sizeof(Entry));
-	new_entry -> entry_num = ++(table_head -> entry_num);
+	new_entry -> entry_num = (table_head -> entry_num)++;
 	new_entry -> scope_level = table_head -> scope_level;
 	new_entry -> name = strdup(symbol_name);
 	new_entry -> entry_type = strdup(entry_name);
@@ -337,7 +424,37 @@ void insert_symbol(char *symbol_name, char *entry_name, char *data_name) {
 
 }
 
-int lookup_symbol() {}
+int lookup_symbol(char *id) {
+	
+	Entry *cur;
+	char *name;
+
+	cur = table_head;
+	cur = cur -> next;
+	while(cur != NULL){
+		name = strdup(cur -> name);
+		strcpy(name, strtok(name, "|"));
+		if((!strcmp(id, name)) && (cur -> scope_level == table_head -> scope_level))
+			break;
+		cur = cur -> next;
+	}
+
+	if(cur != NULL) return 1; // Find out in the same scope
+
+	cur = table_head;
+	cur = cur -> next;
+	while(cur != NULL){
+		name = strdup(cur -> name);
+		strcpy(name, strtok(name, "|"));
+		if(!strcmp(id, name))
+			break;
+		cur = cur -> next;
+	}
+
+	if(cur == NULL) return -1; // Not found
+	else return 0; // Find out in different scope
+
+}
 
 void dump_symbol() {
     printf("\n%-10s%-10s%-12s%-10s%-10s%-10s\n\n",
@@ -355,15 +472,16 @@ void Insert_Entry(Entry **head, Entry *new_entry){
 }
 
 
-Entry *Remove_Entry(Entry **head,int n){
+Entry *Remove_Entry(){
 
+	int n = table_head -> scope_level;
 	Entry *cur,*prev;
 
-	cur = *head;
+	cur = table_head;
 	prev = cur;
 	cur = cur -> next;
 	while(cur != NULL){
-		if((*cur).entry_num == n){
+		if((*cur).scope_level == n){
 			prev -> next = cur -> next;
 			return cur;
 		}
@@ -375,7 +493,38 @@ Entry *Remove_Entry(Entry **head,int n){
 
 }
 
+void Print_Table(int mode){
 
+	int index = 0,scope,cur_scope,flag = 0;
+	char *name,*e,*d,*p;
+	Entry *cur;
+	if(mode) ++(table_head -> scope_level);
+
+	do{
+
+		cur = Remove_Entry();
+		if(cur == NULL){
+			if(mode) --(table_head -> scope_level);
+			break;
+		}
+
+		if(index == 0)dump_symbol();
+		name = strtok(cur -> name, "|");
+		e = cur -> entry_type;
+		d = cur -> data_type;
+		scope = cur -> scope_level;
+		p = strtok(NULL, "|");
+		if(p == NULL) p = "";
+		printf("%-10d%-10s%-12s%-10s%-10d%s\n",index++,name,e,d,scope,p);
+		flag = 1;
+
+	}
+	while(1);
+
+	if(flag) printf("\n");
+	return;
+
+}
 
 
 
