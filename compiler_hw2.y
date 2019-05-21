@@ -38,6 +38,7 @@ void Insert_Entry(Entry **, Entry *);
 Entry *Remove_Entry();
 void yysemantic(int);
 void Print_Table(int);
+int Check_Table();
 
 %}
 
@@ -527,6 +528,22 @@ void Print_Table(int mode){
 }
 
 
+int Check_Table(){
+
+	int n = table_head -> scope_level;
+	Entry *cur;
+
+	cur = table_head -> next;
+	while(cur != NULL){
+		if((*cur).scope_level == n){
+			return 1;
+		}
+		cur = cur -> next;
+	}
+
+	return 0;
+
+}
 
 
 

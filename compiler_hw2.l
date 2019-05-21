@@ -63,7 +63,16 @@ id			{letter}+({letter}|{digit})*
 "("		{ CONCAT; return LB; }
 ")"		{ CONCAT; return RB; }
 "{"		{ CONCAT; return LCB; }
-"}"		{ CONCAT; return RCB; }
+"}"		{ CONCAT;
+		  int i,tmp = strlen(buf); 
+		  if(Check_Table()){
+		      printf("%d: %s\n",yylineno + 1,buf); 
+		      Print_Table(0);
+		      memset(buf,'\0',sizeof(buf));
+		      for(i = 0;i < tmp;++i)
+		          buf[i] = ' ';
+		  }
+		  return RCB; }
 "["		{ CONCAT; return LSB; }
 "]"		{ CONCAT; return RSB; }
 ","		{ CONCAT; return COMMA; }
@@ -119,16 +128,25 @@ id			{letter}+({letter}|{digit})*
 "\""	    { CONCAT; return QUATA; }
 [;]         { CONCAT; return SEMICOLON; }
 [\n]        { if(error_num == 0){
-	      	printf("%d:",yylineno);
-	      	if(strlen(buf) != 0){
+                int i,flag = 0;
+                for(i = 0;i < strlen(buf);++i){
+		    if(buf[i] != ' ')
+		        flag = 1;
+		}
+		if(strlen(buf) == 0)
+		    flag = 1;
+		if(flag){
+	       	    printf("%d:",yylineno);
+	      	    if(strlen(buf) != 0){
 			printf(" ");
-	        }
-	      	printf("%s\n",buf);
+	            }
+	      	    printf("%s\n",buf);
+		}
 	      }
 	      else
 		yysemantic(0);
-	      if(buf[strlen(buf) - 1] == '}')
-		Print_Table(1);
+	      //if(buf[strlen(buf) - 1] == '}')
+		//Print_Table(1);
 	      memset(buf,'\0',sizeof(buf));
             }
 [ \t]		{ CONCAT;} /* Ignore */
