@@ -6,16 +6,19 @@
 #include <string.h>
 
 int error_num;
+int func_flag;
+int declare_line;
 extern int yylineno;
 extern int yylex();
-extern char* yytext;   // Get current token from lex
-char* error_msg;
+extern char *yytext;   // Get current token from lex
+char *error_msg;
+char *buff_tmp;
 extern char buf[256];  // Get current code line from lex
 
 /* Symbol table function - you can add new function if needed. */
 int lookup_symbol(char *);
 void create_symbol();
-void insert_symbol(char *symbol_name,char *entry_name, char *data_name);
+void insert_symbol(char *symbol_name,char *entry_name, char *data_name, int ffd_flag);
 void dump_symbol();
 
 int syntax_error_flag;
@@ -29,6 +32,7 @@ typedef struct entry{
         int scope_level;
         char *parameters;
         struct entry *next;
+	int ffd_flag;
 
 } Entry;
 
@@ -38,6 +42,8 @@ void Insert_Entry(Entry **, Entry *);
 Entry *Remove_Entry();
 void yysemantic(int);
 void Print_Table(int);
+void Change_Table_Flag(char *);
+int Remove_Redundant();
 int Check_Table();
 
 %}
@@ -92,8 +98,46 @@ global_declaration
 ;
 
 func_def 
-    : declaration_specs declarator declaration_list compound_stat 	{insert_symbol($2, "function", $1);}
-    | declaration_specs declarator compound_stat 			{insert_symbol($2, "function", $1);}
+    : declaration_specs declarator declaration_list compound_stat 	{ int lookup_num;
+							                  char *tmp = strdup($2);
+									  char *id = strtok(tmp,"|");
+								          lookup_num = lookup_symbol(id);
+									  if(lookup_num < 0){
+									      insert_symbol($2, "function", $1, 0);
+									  }
+									  else if(lookup_num == 2){
+									      Change_Table_Flag(id);
+									  }
+									  else{
+									      error_num = 3;
+								 	      if(error_msg == NULL)
+									          error_msg = strdup("Redeclared function ");
+									      else
+									          strcpy(error_msg,"Redeclared function ");
+									      strcat(error_msg, id);
+
+									  }
+									}
+    | declaration_specs declarator compound_stat 			{ int lookup_num;
+							                  char *tmp = strdup($2);
+									  char *id = strtok(tmp,"|");
+								          lookup_num = lookup_symbol(id);
+									  if(lookup_num < 0){
+									      insert_symbol($2, "function", $1, 0);
+									  }
+									  else if(lookup_num == 2){
+									      Change_Table_Flag(id);
+									  }
+									  else{
+									      error_num = 3;
+								 	      if(error_msg == NULL)
+									          error_msg = strdup("Redeclared function ");
+									      else
+									          strcpy(error_msg,"Redeclared function ");
+									      strcat(error_msg, id);
+
+									  }
+									}
     | declarator declaration_list compound_stat
     | declarator compound_stat
 ;
@@ -104,11 +148,15 @@ declaration_specs
 ;
 
 declarator 
-    : ID							{$$ = strdup(yytext);}
+    : ID							{$$ = strdup(yytext); }
     | LB declarator RB						{;}
-    | declarator LB enter_scope parameter_list RB leave_scope	{$$ = strcat(strcat($1,"|"), $4);}
+    | declarator LB enter_scope parameter_list RB leave_scope	{
+								    $$ = strcat(strcat($1,"|"), $4);
+								    func_flag = 1;
+								    declare_line = yylineno;
+								}
     | declarator LB id_list RB					{;}
-    | declarator LB RB						{$$ = $1;}
+    | declarator LB RB						{$$ = $1; func_flag = 1; declare_line = yylineno;}
 ;
 
 declaration_list 
@@ -120,8 +168,8 @@ compound_stat
     : LCB enter_scope RCB leave_scope
     | LCB enter_scope block_item_list RCB leave_scope
 ;
-enter_scope : {++(table_head -> scope_level); /*printf("%d\n",table_head -> scope_level);*/}
-leave_scope : {--(table_head -> scope_level);}
+enter_scope : {++(table_head -> scope_level); func_flag = 0; /*printf("%d\n",table_head -> scope_level);*/}
+leave_scope : {--(table_head -> scope_level); }
 
 block_item_list
     : block_item
@@ -140,16 +188,41 @@ stat_list
 
 declaration 
     : declaration_specs SEMICOLON				
-    | declaration_specs init_declarator_list SEMICOLON	{	if(lookup_symbol($2) != 1)
-									insert_symbol($2, "variable", $1);
-								else{
+    | declaration_specs init_declarator_list SEMICOLON	{	int lookup_num,redundant_flag;
+								char *tmp = strdup($2);
+								char *id = strtok(tmp,"|");
+								lookup_num = lookup_symbol(id);
+								if((lookup_num != 1) && (lookup_num != 2)){
+								    if(!func_flag)
+								        insert_symbol($2, "variable", $1, 0);
+								    else{
+									insert_symbol($2, "function", $1, 1);
+									do{
+									    redundant_flag = Remove_Redundant();
+									}while(redundant_flag);
+								    }
+								}
+								else if (lookup_num == 1){
 									error_num = 4;
 									if(error_msg == NULL)
 										error_msg = strdup("Redeclared variable ");
 									else
 										strcpy(error_msg,"Redeclared variable ");
-									strcat(error_msg, $2);
+									strcat(error_msg, id);
 								}
+								else if (lookup_num == 2){
+									error_num = 3;
+									if(error_msg == NULL)
+										error_msg = strdup("Redeclared function ");
+									else
+										strcpy(error_msg,"Redeclared function ");
+									do{
+									    redundant_flag = Remove_Redundant();
+									}while(redundant_flag);
+
+									strcat(error_msg, id);
+								}
+								func_flag = 0;
 							}
 ;
 
@@ -298,7 +371,9 @@ parameter_list
 ;
 
 parameter_declaration 
-    : declaration_specs declarator	{$$ = $1; insert_symbol($2, "parameter", $1);}
+    : declaration_specs declarator	{ $$ = $1;
+					  insert_symbol($2, "parameter", $1, 0);
+                                        }
     | declaration_specs			
 ;
 
@@ -364,7 +439,10 @@ int main(int argc, char** argv)
 {
     yylineno = 0;
     error_num = 0;
+    func_flag = 0;
+    declare_line = 0;
     error_msg = NULL;
+    buff_tmp = NULL;
     syntax_error_flag = 0;
 
     create_symbol();
@@ -395,13 +473,23 @@ void yyerror(char *s)
 
 void yysemantic(int mode){
 
-    	error_num = 0;
+        int lineno;
+
+        if(error_num == 3)
+		lineno = declare_line + 1;
+	else
+		lineno = yylineno + mode;
+
 	printf("%d: %s\n", yylineno + mode, buf);
     	printf("\n|-----------------------------------------------|\n");
-    	printf("| Error found in line %d: %s\n", yylineno + mode, buf);
+	if(error_num == 3)
+    		printf("| Error found in line %d: %s\n", lineno, buff_tmp);
+	else
+    		printf("| Error found in line %d: %s\n", lineno, buf);
     	printf("| %s", error_msg);
     	printf("\n|-----------------------------------------------|\n\n");
 	if(!mode)memset(buf,'\0',sizeof(buf));
+    	error_num = 0;
 
 }
 
@@ -412,7 +500,7 @@ void create_symbol() {
 	table_head -> next = NULL;
 }
 
-void insert_symbol(char *symbol_name, char *entry_name, char *data_name) {
+void insert_symbol(char *symbol_name, char *entry_name, char *data_name, int ffd_flag) {
 
 	//printf("insert symbol\n%s\n%s\n%s\n", symbol_name, entry_name, data_name);
 	Entry *new_entry = (Entry *)malloc(sizeof(Entry));
@@ -421,6 +509,7 @@ void insert_symbol(char *symbol_name, char *entry_name, char *data_name) {
 	new_entry -> name = strdup(symbol_name);
 	new_entry -> entry_type = strdup(entry_name);
 	new_entry -> data_type = strdup(data_name);
+	new_entry -> ffd_flag = ffd_flag;
 	Insert_Entry(&table_head, new_entry);
 
 }
@@ -440,7 +529,10 @@ int lookup_symbol(char *id) {
 		cur = cur -> next;
 	}
 
-	if(cur != NULL) return 1; // Find out in the same scope
+	if(cur != NULL) {
+		if(cur -> ffd_flag == 1) return 2; // Find out forwarding declared function
+		else return 1; // Find out in the same scope
+	}
 
 	cur = table_head;
 	cur = cur -> next;
@@ -452,8 +544,11 @@ int lookup_symbol(char *id) {
 		cur = cur -> next;
 	}
 
-	if(cur == NULL) return -1; // Not found
-	else return 0; // Find out in different scope
+	if(cur != NULL){
+		if(cur -> ffd_flag == 1) return 2; // Find out forwarding declared function
+		else return 0; // Find out in different scope
+	}
+	else return -1; // Not found
 
 }
 
@@ -517,13 +612,56 @@ void Print_Table(int mode){
 		p = strtok(NULL, "|");
 		if(p == NULL) p = "";
 		printf("%-10d%-10s%-12s%-10s%-10d%s\n",index++,name,e,d,scope,p);
+		free(cur);
 		flag = 1;
 
-	}
-	while(1);
+	}while(1);
 
 	if(flag) printf("\n");
 	return;
+
+}
+
+
+void Change_Table_Flag(char *id){
+
+	Entry *cur;
+
+	cur = table_head -> next;
+	while(cur != NULL){
+		char *tmp = strdup(cur -> name);
+		char *name = strtok(tmp,"|");
+		if(!strcmp(name, id)){
+			cur -> ffd_flag = 0;
+			return;
+		}
+		cur = cur -> next;
+	}
+
+	return;
+
+}
+
+
+int Remove_Redundant(){
+
+	int n = (table_head -> scope_level) + 1;
+	Entry *cur,*prev;
+
+	cur = table_head;
+	prev = cur;
+	cur = cur -> next;
+	while(cur != NULL){
+		if((*cur).scope_level == n){
+			prev -> next = cur -> next;
+			free(cur);
+			return 1;
+		}
+		prev = cur;
+		cur = cur -> next;
+	}
+
+	return 0;
 
 }
 

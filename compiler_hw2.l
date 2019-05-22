@@ -7,8 +7,11 @@
 #define BUF_SIZE 256
 
 extern int error_num;
+extern int declare_line;
+extern char *buff_tmp;
 extern YYSTYPE yylval; //YYSTYPE
 extern yylineno;
+int print_flag;
 char buf[BUF_SIZE];
 
 /* This macro is used to record code line */
@@ -64,14 +67,15 @@ id			{letter}+({letter}|{digit})*
 ")"		{ CONCAT; return RB; }
 "{"		{ CONCAT; return LCB; }
 "}"		{ CONCAT;
-		  int i,tmp = strlen(buf); 
+	          print_flag = 1;
+		  /*int i,tmp = strlen(buf); 
 		  if(Check_Table()){
 		      printf("%d: %s\n",yylineno + 1,buf); 
 		      Print_Table(0);
 		      memset(buf,'\0',sizeof(buf));
 		      for(i = 0;i < tmp;++i)
 		          buf[i] = ' ';
-		  }
+		  }*/
 		  return RCB; }
 "["		{ CONCAT; return LSB; }
 "]"		{ CONCAT; return RSB; }
@@ -145,8 +149,20 @@ id			{letter}+({letter}|{digit})*
 	      }
 	      else
 		yysemantic(0);
-	      //if(buf[strlen(buf) - 1] == '}')
-		//Print_Table(1);
+	      if(buf[strlen(buf) - 1] == '}'){
+	          Print_Table(1);
+                  print_flag = 0;
+              }
+	      else if(print_flag){
+	          Print_Table(0);
+                  print_flag = 0;
+              }
+	      if(yylineno == declare_line + 1){
+	          if(buff_tmp == NULL)
+		      buff_tmp = strdup(buf);
+		  else
+		      strcpy(buff_tmp,buf);
+	      }
 	      memset(buf,'\0',sizeof(buf));
             }
 [ \t]		{ CONCAT;} /* Ignore */
@@ -156,6 +172,7 @@ id			{letter}+({letter}|{digit})*
 %%
 
 int yywrap()
-{
+{   
+    print_flag = 0;
     return 1;
 }
